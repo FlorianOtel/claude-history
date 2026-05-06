@@ -11,7 +11,6 @@
 
 use crate::claude::{self, AgentContent, ContentBlock, LogEntry, UserContent, UserMessage};
 use crate::tool_format;
-use chrono::Local;
 use std::fs::{self, File};
 #[cfg(target_os = "linux")]
 use std::io::Write as _;
@@ -63,15 +62,44 @@ pub struct ExportOptions {
     pub show_thinking: bool,
 }
 
+/// Sanitize a string for use as a filename
+fn sanitize_filename(s: &str) -> String {
+    let s: String = s
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let s = s
+        .split('-')
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    let s = s.trim_matches('-').to_string();
+    let s = if s.len() > 60 { s[..60].to_string() } else { s };
+    if s.is_empty() {
+        "conversation".to_string()
+    } else {
+        s
+    }
+}
+
 /// Export conversation to file
 pub fn export_to_file(
     source_path: &Path,
     format: ExportFormat,
     options: ExportOptions,
+    custom_title: Option<&str>,
+    last_modified: chrono::DateTime<chrono::Local>,
 ) -> ExportResult {
-    let timestamp = Local::now().format("%Y-%m-%d-%H%M%S");
+    let title = sanitize_filename(custom_title.unwrap_or("conversation"));
+    let ts = last_modified.format("%Y-%m-%d--%H-%M");
     let ext = format.extension();
-    let filename = format!("conversation-{}.{}", timestamp, ext);
+    let filename = format!("{}--{}.{}", title, ts, ext);
 
     let content = match generate_content(source_path, format, options) {
         Ok(c) => c,

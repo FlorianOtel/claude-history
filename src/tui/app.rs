@@ -94,6 +94,10 @@ pub struct ViewState {
     pub focused_message: Option<usize>,
     /// Whether message navigation mode is active (shows gutter indicator)
     pub message_nav_active: bool,
+    /// Custom title for export naming
+    pub custom_title: Option<String>,
+    /// Conversation timestamp for export naming
+    pub last_modified: chrono::DateTime<chrono::Local>,
 }
 
 /// Search mode within view
@@ -378,7 +382,7 @@ impl App {
         let mut filtered = Vec::new();
         let mut selected = None;
 
-        if let Ok(Some(mut conv)) = process_conversation_file(path.clone(), modified, None) {
+        if let Ok(Some(mut conv)) = process_conversation_file(path.clone(), modified, None, None) {
             // Set project_name the same way as the loader does
             let project_path = conv.cwd.clone().unwrap_or_else(|| path.clone());
             conv.project_name = Some(format_short_name_from_path(&project_path));
@@ -387,6 +391,9 @@ impl App {
             filtered.push(0);
             selected = Some(0);
         }
+
+        let conv_title = conversations.first().and_then(|c| c.custom_title.clone());
+        let conv_ts = conversations.first().map(|c| c.timestamp).unwrap_or_else(chrono::Local::now);
 
         Self {
             conversations,
@@ -413,6 +420,8 @@ impl App {
                 message_ranges: Vec::new(),
                 focused_message: None,
                 message_nav_active: false,
+                custom_title: conv_title,
+                last_modified: conv_ts,
             }),
             status_message: None,
             tool_display,
@@ -627,7 +636,7 @@ impl App {
         // Try to find and load from filesystem
         let path = crate::history::find_jsonl_by_uuid(uuid).ok()??;
         let modified = path.metadata().ok().and_then(|m| m.modified().ok());
-        let mut conv = crate::history::process_conversation_file(path, modified, None).ok()??;
+        let mut conv = crate::history::process_conversation_file(path, modified, None, None).ok()??;
 
         // Inject project metadata (process_conversation_file doesn't set these)
         let fallback_path = conv
@@ -1065,13 +1074,15 @@ impl App {
 
     /// Perform export or yank operation
     fn perform_export(&mut self, option: usize, to_clipboard: bool) {
-        let (path, options) = match &self.app_mode {
+        let (path, options, custom_title, last_modified) = match &self.app_mode {
             AppMode::View(state) => (
                 state.conversation_path.clone(),
                 crate::tui::export::ExportOptions {
                     show_tools: state.tool_display.is_visible(),
                     show_thinking: state.show_thinking,
                 },
+                state.custom_title.clone(),
+                state.last_modified,
             ),
             _ => return,
         };
@@ -1084,7 +1095,7 @@ impl App {
         let result = if to_clipboard {
             crate::tui::export::export_to_clipboard(&path, format, options)
         } else {
-            crate::tui::export::export_to_file(&path, format, options)
+            crate::tui::export::export_to_file(&path, format, options, custom_title.as_deref(), last_modified)
         };
 
         self.status_message = Some((result.message, std::time::Instant::now()));
@@ -1842,6 +1853,8 @@ impl App {
             return;
         };
         let path = self.conversations[conv_idx].path.clone();
+        let conv_title = self.conversations[conv_idx].custom_title.clone();
+        let conv_ts = self.conversations[conv_idx].timestamp;
 
         let options = RenderOptions {
             tool_display: self.tool_display,
@@ -1874,6 +1887,8 @@ impl App {
                     message_ranges: rendered.messages,
                     focused_message: first_msg,
                     message_nav_active: false,
+                    custom_title: conv_title,
+                    last_modified: conv_ts,
                 });
             }
             Err(e) => {
