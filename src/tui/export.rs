@@ -248,6 +248,11 @@ pub fn extract_message_text(
 
 /// Format a single log entry as text for clipboard
 fn format_entry_for_clipboard(entry: &LogEntry, options: ExportOptions) -> String {
+    let command_headings = if options.operator_only {
+        load_command_headings()
+    } else {
+        vec![]
+    };
     let mut output = String::new();
     match entry {
         LogEntry::User {
@@ -255,7 +260,7 @@ fn format_entry_for_clipboard(entry: &LogEntry, options: ExportOptions) -> Strin
             parent_tool_use_id,
             ..
         } => {
-            if let Some(text) = extract_user_text(message, options.operator_only) {
+            if let Some(text) = extract_user_text(message, options.operator_only, &command_headings) {
                 output.push_str(&text);
             }
             if options.show_tools
@@ -366,6 +371,11 @@ fn generate_plain(path: &Path, options: ExportOptions) -> std::io::Result<String
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut output = String::new();
+    let command_headings = if options.operator_only {
+        load_command_headings()
+    } else {
+        vec![]
+    };
 
     for line in reader.lines() {
         let line = line?;
@@ -387,7 +397,7 @@ fn generate_plain(path: &Path, options: ExportOptions) -> std::io::Result<String
                         continue;
                     }
                     let prefix = subagent_prefix(&parent_tool_use_id);
-                    if let Some(text) = extract_user_text(&message, options.operator_only) {
+                    if let Some(text) = extract_user_text(&message, options.operator_only, &command_headings) {
                         output.push_str(&format!("{}You: {}\n\n", prefix, text));
                     }
                     // Tool results
@@ -452,6 +462,11 @@ fn generate_markdown(path: &Path, options: ExportOptions) -> std::io::Result<Str
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut output = String::new();
+    let command_headings = if options.operator_only {
+        load_command_headings()
+    } else {
+        vec![]
+    };
 
     for line in reader.lines() {
         let line = line?;
@@ -473,7 +488,7 @@ fn generate_markdown(path: &Path, options: ExportOptions) -> std::io::Result<Str
                         continue;
                     }
                     let prefix = subagent_prefix(&parent_tool_use_id);
-                    if let Some(text) = extract_user_text(&message, options.operator_only) {
+                    if let Some(text) = extract_user_text(&message, options.operator_only, &command_headings) {
                         output.push_str(&format!("## {}You\n\n{}\n\n", prefix, text));
                     }
                     // Tool results
@@ -544,6 +559,11 @@ fn generate_ledger(path: &Path, options: ExportOptions) -> std::io::Result<Strin
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut output = String::new();
+    let command_headings = if options.operator_only {
+        load_command_headings()
+    } else {
+        vec![]
+    };
 
     const NAME_WIDTH: usize = 9;
     // 3 for " │ " separator
@@ -572,7 +592,7 @@ fn generate_ledger(path: &Path, options: ExportOptions) -> std::io::Result<Strin
                         Some(id) => format!("↳{}", claude::short_parent_id(id)),
                         None => "You".to_string(),
                     };
-                    if let Some(text) = extract_user_text(&message, options.operator_only) {
+                    if let Some(text) = extract_user_text(&message, options.operator_only, &command_headings) {
                         let wrapped = wrap_plain_text(&text, content_width);
                         append_ledger_block(&mut output, &speaker, &wrapped, NAME_WIDTH);
                         output.push('\n');
@@ -682,13 +702,13 @@ fn subagent_prefix(parent_tool_use_id: &Option<String>) -> String {
 }
 
 /// Extract text from a user message, handling command messages
-fn extract_user_text(message: &UserMessage, operator_only: bool) -> Option<String> {
+fn extract_user_text(message: &UserMessage, operator_only: bool, command_headings: &[String]) -> Option<String> {
     match &message.content {
-        UserContent::String(s) => process_command_text(s, operator_only),
+        UserContent::String(s) => process_command_text(s, operator_only, command_headings),
         UserContent::Blocks(blocks) => {
             for block in blocks {
                 if let ContentBlock::Text { text } = block
-                    && let Some(processed) = process_command_text(text, operator_only)
+                    && let Some(processed) = process_command_text(text, operator_only, command_headings)
                 {
                     return Some(processed);
                 }
@@ -699,12 +719,20 @@ fn extract_user_text(message: &UserMessage, operator_only: bool) -> Option<Strin
 }
 
 /// Process command message text, extracting content from XML tags
-fn process_command_text(text: &str, operator_only: bool) -> Option<String> {
+fn process_command_text(text: &str, operator_only: bool, command_headings: &[String]) -> Option<String> {
     let trimmed = text.trim();
 
     // When operator_only, skip messages starting with "Base directory for this skill:"
     if operator_only && trimmed.starts_with("Base directory for this skill:") {
         return None;
+    }
+
+    // Skip injected skill instruction bodies — they start with the command's heading line
+    if operator_only && !command_headings.is_empty() {
+        let trimmed_text = text.trim();
+        if command_headings.iter().any(|h| trimmed_text.starts_with(h.as_str())) {
+            return None;
+        }
     }
 
     // Handle <local-command-stdout> tags
@@ -756,6 +784,35 @@ fn process_command_text(text: &str, operator_only: bool) -> Option<String> {
     } else {
         Some(result)
     }
+}
+
+/// Load the first markdown heading from each command file in ~/.claude/commands/.
+/// Used to detect injected skill instruction bodies in operator-only exports.
+fn load_command_headings() -> Vec<String> {
+    let Some(home) = home::home_dir() else {
+        return vec![];
+    };
+    let commands_dir = home.join(".claude").join("commands");
+    let Ok(entries) = std::fs::read_dir(&commands_dir) else {
+        return vec![];
+    };
+    let mut headings = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in content.lines() {
+            if line.starts_with('#') {
+                headings.push(line.trim().to_string());
+                break;
+            }
+        }
+    }
+    headings
 }
 
 /// Strip known harness-injected XML blocks from user message text
