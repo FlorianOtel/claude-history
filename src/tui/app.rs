@@ -45,11 +45,12 @@ pub enum DialogMode {
 }
 
 /// Export format options for menus
-const EXPORT_OPTIONS: [&str; 4] = [
+const EXPORT_OPTIONS: [&str; 5] = [
     "Ledger (formatted)",
     "Plain text",
     "Markdown",
     "JSONL (raw)",
+    "Operator dialogue",
 ];
 
 /// Main application mode
@@ -1045,6 +1046,11 @@ impl App {
                 self.dialog_mode = DialogMode::None;
                 None
             }
+            KeyCode::Char('5') => {
+                self.perform_export(4, is_yank);
+                self.dialog_mode = DialogMode::None;
+                None
+            }
             // Enter to select current option
             KeyCode::Enter => {
                 let sel = *selected;
@@ -1080,6 +1086,7 @@ impl App {
                 crate::tui::export::ExportOptions {
                     show_tools: state.tool_display.is_visible(),
                     show_thinking: state.show_thinking,
+                    operator_only: false,
                 },
                 state.custom_title.clone(),
                 state.last_modified,
@@ -2288,6 +2295,7 @@ impl App {
             crate::tui::export::ExportOptions {
                 show_tools: state.tool_display.is_visible(),
                 show_thinking: state.show_thinking,
+                operator_only: false,
             }
         } else {
             return;

@@ -966,10 +966,11 @@ fn render_export_menu(frame: &mut Frame, selected: usize, is_yank: bool) {
         "[2] Plain text",
         "[3] Markdown",
         "[4] JSONL (raw)",
+        "[5] Operator dialogue",
     ];
 
     let area = frame.area();
-    let menu_width = 35;
+    let menu_width = 38;
     let menu_height = options.len() as u16 + 4; // options + title + border + cancel hint
 
     // Center the menu

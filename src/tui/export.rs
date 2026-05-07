@@ -26,16 +26,18 @@ pub enum ExportFormat {
     Plain,
     Markdown,
     Jsonl,
+    OperatorMarkdown,
 }
 
 impl ExportFormat {
-    /// Get format from menu option index (0-3)
+    /// Get format from menu option index (0-4)
     pub fn from_index(index: usize) -> Option<Self> {
         match index {
             0 => Some(ExportFormat::Ledger),
             1 => Some(ExportFormat::Plain),
             2 => Some(ExportFormat::Markdown),
             3 => Some(ExportFormat::Jsonl),
+            4 => Some(ExportFormat::OperatorMarkdown),
             _ => None,
         }
     }
@@ -44,7 +46,7 @@ impl ExportFormat {
     fn extension(&self) -> &'static str {
         match self {
             ExportFormat::Ledger | ExportFormat::Plain => "txt",
-            ExportFormat::Markdown => "md",
+            ExportFormat::Markdown | ExportFormat::OperatorMarkdown => "md",
             ExportFormat::Jsonl => "jsonl",
         }
     }
@@ -60,6 +62,7 @@ pub struct ExportResult {
 pub struct ExportOptions {
     pub show_tools: bool,
     pub show_thinking: bool,
+    pub operator_only: bool,
 }
 
 /// Sanitize a string for use as a filename
@@ -252,7 +255,7 @@ fn format_entry_for_clipboard(entry: &LogEntry, options: ExportOptions) -> Strin
             parent_tool_use_id,
             ..
         } => {
-            if let Some(text) = extract_user_text(message) {
+            if let Some(text) = extract_user_text(message, options.operator_only) {
                 output.push_str(&text);
             }
             if options.show_tools
@@ -345,6 +348,16 @@ fn generate_content(
         ExportFormat::Plain => generate_plain(source_path, options),
         ExportFormat::Markdown => generate_markdown(source_path, options),
         ExportFormat::Ledger => generate_ledger(source_path, options),
+        ExportFormat::OperatorMarkdown => {
+            generate_markdown(
+                source_path,
+                ExportOptions {
+                    operator_only: true,
+                    show_tools: false,
+                    show_thinking: false,
+                },
+            )
+        }
     }
 }
 
@@ -366,11 +379,15 @@ fn generate_plain(path: &Path, options: ExportOptions) -> std::io::Result<String
                     parent_tool_use_id,
                     ..
                 } => {
+                    // Hard skip if operator_only and parent_tool_use_id is set
+                    if options.operator_only && parent_tool_use_id.is_some() {
+                        continue;
+                    }
                     if parent_tool_use_id.is_some() && !options.show_thinking {
                         continue;
                     }
                     let prefix = subagent_prefix(&parent_tool_use_id);
-                    if let Some(text) = extract_user_text(&message) {
+                    if let Some(text) = extract_user_text(&message, options.operator_only) {
                         output.push_str(&format!("{}You: {}\n\n", prefix, text));
                     }
                     // Tool results
@@ -393,6 +410,10 @@ fn generate_plain(path: &Path, options: ExportOptions) -> std::io::Result<String
                     parent_tool_use_id,
                     ..
                 } => {
+                    // Hard skip if operator_only and parent_tool_use_id is set
+                    if options.operator_only && parent_tool_use_id.is_some() {
+                        continue;
+                    }
                     if parent_tool_use_id.is_some() && !options.show_thinking {
                         continue;
                     }
@@ -400,13 +421,18 @@ fn generate_plain(path: &Path, options: ExportOptions) -> std::io::Result<String
                     for block in &message.content {
                         match block {
                             ContentBlock::Text { text } => {
-                                output.push_str(&format!("{}Claude: {}\n\n", prefix, text));
+                                if options.operator_only {
+                                    // Only emit Text blocks when operator_only
+                                    output.push_str(&format!("{}Claude: {}\n\n", prefix, text));
+                                } else {
+                                    output.push_str(&format!("{}Claude: {}\n\n", prefix, text));
+                                }
                             }
-                            ContentBlock::ToolUse { name, input, .. } if options.show_tools => {
+                            ContentBlock::ToolUse { name, input, .. } if options.show_tools && !options.operator_only => {
                                 let formatted = format_tool_call_for_export(name, input);
                                 output.push_str(&format!("{}Tool: {}\n\n", prefix, formatted));
                             }
-                            ContentBlock::Thinking { thinking, .. } if options.show_thinking => {
+                            ContentBlock::Thinking { thinking, .. } if options.show_thinking && !options.operator_only => {
                                 output.push_str(&format!("{}Thinking: {}\n\n", prefix, thinking));
                             }
                             _ => {}
@@ -439,11 +465,15 @@ fn generate_markdown(path: &Path, options: ExportOptions) -> std::io::Result<Str
                     parent_tool_use_id,
                     ..
                 } => {
+                    // Hard skip if operator_only and parent_tool_use_id is set
+                    if options.operator_only && parent_tool_use_id.is_some() {
+                        continue;
+                    }
                     if parent_tool_use_id.is_some() && !options.show_thinking {
                         continue;
                     }
                     let prefix = subagent_prefix(&parent_tool_use_id);
-                    if let Some(text) = extract_user_text(&message) {
+                    if let Some(text) = extract_user_text(&message, options.operator_only) {
                         output.push_str(&format!("## {}You\n\n{}\n\n", prefix, text));
                     }
                     // Tool results
@@ -467,6 +497,10 @@ fn generate_markdown(path: &Path, options: ExportOptions) -> std::io::Result<Str
                     parent_tool_use_id,
                     ..
                 } => {
+                    // Hard skip if operator_only and parent_tool_use_id is set
+                    if options.operator_only && parent_tool_use_id.is_some() {
+                        continue;
+                    }
                     if parent_tool_use_id.is_some() && !options.show_thinking {
                         continue;
                     }
@@ -476,7 +510,7 @@ fn generate_markdown(path: &Path, options: ExportOptions) -> std::io::Result<Str
                             ContentBlock::Text { text } => {
                                 output.push_str(&format!("## {}Claude\n\n{}\n\n", prefix, text));
                             }
-                            ContentBlock::ToolUse { name, input, .. } if options.show_tools => {
+                            ContentBlock::ToolUse { name, input, .. } if options.show_tools && !options.operator_only => {
                                 let formatted = format_tool_call_for_export(name, input);
                                 let fenced = markdown_code_fence(&formatted);
                                 output.push_str(&format!(
@@ -484,7 +518,7 @@ fn generate_markdown(path: &Path, options: ExportOptions) -> std::io::Result<Str
                                     prefix, name, fenced
                                 ));
                             }
-                            ContentBlock::Thinking { thinking, .. } if options.show_thinking => {
+                            ContentBlock::Thinking { thinking, .. } if options.show_thinking && !options.operator_only => {
                                 output.push_str(&format!(
                                     "### {}Thinking\n\n{}\n\n",
                                     prefix, thinking
@@ -527,6 +561,10 @@ fn generate_ledger(path: &Path, options: ExportOptions) -> std::io::Result<Strin
                     parent_tool_use_id,
                     ..
                 } => {
+                    // Hard skip if operator_only and parent_tool_use_id is set
+                    if options.operator_only && parent_tool_use_id.is_some() {
+                        continue;
+                    }
                     if parent_tool_use_id.is_some() && !options.show_thinking {
                         continue;
                     }
@@ -534,7 +572,7 @@ fn generate_ledger(path: &Path, options: ExportOptions) -> std::io::Result<Strin
                         Some(id) => format!("↳{}", claude::short_parent_id(id)),
                         None => "You".to_string(),
                     };
-                    if let Some(text) = extract_user_text(&message) {
+                    if let Some(text) = extract_user_text(&message, options.operator_only) {
                         let wrapped = wrap_plain_text(&text, content_width);
                         append_ledger_block(&mut output, &speaker, &wrapped, NAME_WIDTH);
                         output.push('\n');
@@ -561,6 +599,10 @@ fn generate_ledger(path: &Path, options: ExportOptions) -> std::io::Result<Strin
                     parent_tool_use_id,
                     ..
                 } => {
+                    // Hard skip if operator_only and parent_tool_use_id is set
+                    if options.operator_only && parent_tool_use_id.is_some() {
+                        continue;
+                    }
                     if parent_tool_use_id.is_some() && !options.show_thinking {
                         continue;
                     }
@@ -577,7 +619,7 @@ fn generate_ledger(path: &Path, options: ExportOptions) -> std::io::Result<Strin
                                 append_ledger_block(&mut output, &speaker, rendered, NAME_WIDTH);
                                 output.push('\n');
                             }
-                            ContentBlock::ToolUse { name, input, .. } if options.show_tools => {
+                            ContentBlock::ToolUse { name, input, .. } if options.show_tools && !options.operator_only => {
                                 let formatted =
                                     format_tool_call_for_ledger(name, input, content_width);
                                 let tool_label = if parent_tool_use_id.is_some() {
@@ -594,7 +636,7 @@ fn generate_ledger(path: &Path, options: ExportOptions) -> std::io::Result<Strin
                                 output.push('\n');
                             }
                             ContentBlock::Thinking { thinking, .. }
-                                if options.show_thinking && !thinking.is_empty() =>
+                                if options.show_thinking && !options.operator_only && !thinking.is_empty() =>
                             {
                                 let rendered =
                                     crate::markdown::render_markdown_plain(thinking, content_width);
@@ -640,13 +682,13 @@ fn subagent_prefix(parent_tool_use_id: &Option<String>) -> String {
 }
 
 /// Extract text from a user message, handling command messages
-fn extract_user_text(message: &UserMessage) -> Option<String> {
+fn extract_user_text(message: &UserMessage, operator_only: bool) -> Option<String> {
     match &message.content {
-        UserContent::String(s) => process_command_text(s),
+        UserContent::String(s) => process_command_text(s, operator_only),
         UserContent::Blocks(blocks) => {
             for block in blocks {
                 if let ContentBlock::Text { text } = block
-                    && let Some(processed) = process_command_text(text)
+                    && let Some(processed) = process_command_text(text, operator_only)
                 {
                     return Some(processed);
                 }
@@ -657,8 +699,13 @@ fn extract_user_text(message: &UserMessage) -> Option<String> {
 }
 
 /// Process command message text, extracting content from XML tags
-fn process_command_text(text: &str) -> Option<String> {
+fn process_command_text(text: &str, operator_only: bool) -> Option<String> {
     let trimmed = text.trim();
+
+    // When operator_only, skip messages starting with "Base directory for this skill:"
+    if operator_only && trimmed.starts_with("Base directory for this skill:") {
+        return None;
+    }
 
     // Handle <local-command-stdout> tags
     if trimmed.starts_with("<local-command-stdout>") && trimmed.ends_with("</local-command-stdout>")
@@ -696,7 +743,48 @@ fn process_command_text(text: &str) -> Option<String> {
         }
     }
 
-    Some(text.to_string())
+    let mut result = text.to_string();
+
+    // If operator_only, strip XML injections
+    if operator_only {
+        result = strip_xml_injections(&result);
+    }
+
+    // Return None if the result is empty after trimming
+    if result.trim().is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+/// Strip known harness-injected XML blocks from user message text
+fn strip_xml_injections(text: &str) -> String {
+    let mut result = text.to_string();
+
+    // Tags to strip: contents + tags
+    let tags_to_strip = [
+        ("<system-reminder>", "</system-reminder>"),
+        ("<command-message>", "</command-message>"),
+        ("<user-prompt-submit-hook>", "</user-prompt-submit-hook>"),
+        ("<local-command-caveat>", "</local-command-caveat>"),
+    ];
+
+    for (open_tag, close_tag) in &tags_to_strip {
+        while let Some(start) = result.find(open_tag) {
+            if let Some(end) = result.find(close_tag) {
+                if start < end {
+                    result.drain(start..end + close_tag.len());
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    result.trim().to_string()
 }
 
 /// Wrap content in markdown code fence, handling nested backticks
@@ -903,6 +991,7 @@ mod tests {
             ExportOptions {
                 show_tools: false,
                 show_thinking: false,
+                operator_only: false,
             },
         )
         .unwrap();

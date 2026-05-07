@@ -12,6 +12,7 @@
 //! - `path` - Path encoding/decoding utilities
 
 pub mod cache;
+pub mod global_log;
 mod loader;
 mod parser;
 pub mod path;

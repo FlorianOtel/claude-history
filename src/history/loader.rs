@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::fs::read_dir;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 use std::time::SystemTime;
 
@@ -34,24 +35,18 @@ pub fn load_all_conversations(
         &format!("Loading global history from {} projects", projects.len()),
     );
 
+    // Load Claude Code's global history log to supplement missing metadata
+    let display_map = Arc::new(super::global_log::load_session_display_map());
+
     // Load conversations from all projects in parallel
     let mut all_conversations: Vec<Conversation> = projects
         .par_iter()
         .flat_map(|project| {
             let project_dir = root.join(&project.name);
-            match load_conversations(&project_dir, show_last, &project.name, debug_level) {
-                Ok(mut convs) => {
-                    // Fallback path for old JSONL files without cwd field
-                    let fallback_path = decode_project_dir_name_to_path(&project.name);
-
-                    // Inject project info into each conversation
-                    for conv in &mut convs {
-                        // Prefer the cwd extracted from the JSONL file (accurate), fall back to decoded path
-                        let project_path =
-                            conv.cwd.clone().unwrap_or_else(|| fallback_path.clone());
-                        conv.project_name = Some(format_short_name_from_path(&project_path));
-                        conv.project_path = Some(project_path);
-                    }
+            match load_conversations(&project_dir, show_last, &project.name, debug_level, &display_map) {
+                Ok(convs) => {
+                    // Note: load_conversations already assigns project_name and project_path,
+                    // so nothing to do here. The convs are ready to use.
                     convs
                 }
                 Err(e) => {
@@ -93,7 +88,9 @@ pub fn load_all_conversations_streaming(
     let (tx, rx) = mpsc::channel();
 
     thread::spawn(move || {
-        load_all_streaming_inner(tx, show_last, debug_level);
+        // Load Claude Code's global history log to supplement missing metadata
+        let display_map = Arc::new(super::global_log::load_session_display_map());
+        load_all_streaming_inner(tx, show_last, debug_level, display_map);
     });
 
     rx
@@ -103,6 +100,7 @@ fn load_all_streaming_inner(
     tx: Sender<LoaderMessage>,
     show_last: bool,
     debug_level: Option<DebugLevel>,
+    display_map: Arc<std::collections::HashMap<String, String>>,
 ) {
     // First, validate that the projects root exists (fatal if not)
     let root = match super::get_claude_projects_root() {
@@ -138,20 +136,15 @@ fn load_all_streaming_inner(
     projects.par_iter().for_each(|project| {
         let project_dir = root.join(&project.name);
 
-        match load_conversations(&project_dir, show_last, &project.name, debug_level) {
-            Ok(mut convs) => {
+        match load_conversations(&project_dir, show_last, &project.name, debug_level, &display_map) {
+            Ok(convs) => {
                 if convs.is_empty() {
                     return;
                 }
 
-                let fallback_path = decode_project_dir_name_to_path(&project.name);
-
-                for conv in &mut convs {
-                    let project_path = conv.cwd.clone().unwrap_or_else(|| fallback_path.clone());
-                    conv.project_name = Some(format_short_name_from_path(&project_path));
-                    conv.project_path = Some(project_path);
-                }
-
+                // Note: load_conversations already assigns project_name and project_path,
+                // so the convs are ready to send as-is.
+                
                 // Send batch, ignore error if receiver dropped
                 let _ = tx.send(LoaderMessage::Batch(convs));
             }
@@ -294,6 +287,7 @@ pub fn load_conversations(
     show_last: bool,
     project_dir_name: &str,
     debug_level: Option<DebugLevel>,
+    display_map: &Arc<HashMap<String, String>>,
 ) -> Result<Vec<Conversation>> {
     // Load existing cache for this project
     let cached_entries = cache::read_project_cache(project_dir_name).unwrap_or_default();
@@ -355,7 +349,23 @@ pub fn load_conversations(
                 // Negative cache hit — file was previously parsed and yielded nothing
                 debug::debug(debug_level, &format!("Cache hit (empty) {}", filename));
             } else {
-                let conv = cache::conversation_from_entry(entry, path.clone(), show_last);
+                let mut conv = cache::conversation_from_entry(entry, path.clone(), show_last);
+                
+                // Apply display_hint from history.jsonl as custom_title if no local metadata exists
+                if conv.custom_title.is_none() && conv.summary.is_none() {
+                    let uuid = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("");
+                    if let Some(hint) = display_map.get(uuid) {
+                        conv.custom_title = Some(hint.clone());
+                        debug::debug(
+                            debug_level,
+                            &format!("Cache hit with display_hint {}: {}", filename, hint),
+                        );
+                    }
+                }
+                
                 debug::debug(
                     debug_level,
                     &format!("Cache hit {}: {}", filename, conv.preview),
@@ -394,7 +404,15 @@ pub fn load_conversations(
                     .unwrap_or("unknown")
                     .to_owned();
 
-                match process_conversation_file(path, modified, debug_level) {
+                // Extract UUID from path and look up display hint from global history
+                let uuid = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let display_hint = display_map.get(&uuid).map(|s| s.as_str());
+
+                match process_conversation_file(path, modified, debug_level, display_hint) {
                     Ok(Some(mut conversation)) => {
                         conversation.preview = if show_last {
                             conversation.preview_last.clone()
@@ -438,10 +456,23 @@ pub fn load_conversations(
     for (idx, conv) in conversations.iter_mut().enumerate() {
         conv.index = idx;
 
-        // Prefer the cwd extracted from the JSONL file, fall back to decoded path
-        let project_path = conv.cwd.clone().unwrap_or_else(|| fallback_path.clone());
-        conv.project_name = Some(format_short_name_from_path(&project_path));
-        conv.project_path = Some(project_path);
+        // Check for per-session project name sidecar (created by new-project-chats.sh)
+        // This handles multiple logical projects in the same physical directory
+        let session_override = std::fs::read_to_string(conv.path.with_extension("project-name"))
+            .ok()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty());
+
+        // Priority 1: <uuid>.project-name sidecar (ensures moved sessions show correct project)
+        // Priority 2: cwd field from JSONL (accurate for unmoved sessions)
+        // Priority 3: decoded project directory (lossy fallback for very old sessions)
+        conv.project_name = session_override.or_else(|| {
+            let project_path = conv.cwd.clone().unwrap_or_else(|| fallback_path.clone());
+            Some(format_short_name_from_path(&project_path))
+        });
+        
+        // project_path is always based on cwd (needed for correct resume dir)
+        conv.project_path = Some(conv.cwd.clone().unwrap_or_else(|| fallback_path.clone()));
     }
 
     // Write updated cache if anything changed

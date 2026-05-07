@@ -25,10 +25,11 @@ pub fn process_conversation_file(
     path: PathBuf,
     modified: Option<SystemTime>,
     debug_level: Option<DebugLevel>,
+    display_hint: Option<&str>,
 ) -> Result<Option<Conversation>> {
     let file = File::open(&path)?;
     let reader = BufReader::new(file);
-    process_conversation_reader(path, reader, modified, debug_level)
+    process_conversation_reader(path, reader, modified, debug_level, display_hint)
 }
 
 /// Process a conversation from any BufRead source (for testability)
@@ -37,6 +38,7 @@ pub(crate) fn process_conversation_reader<R: BufRead>(
     reader: R,
     modified: Option<SystemTime>,
     debug_level: Option<DebugLevel>,
+    display_hint: Option<&str>,
 ) -> Result<Option<Conversation>> {
     let filename = path
         .file_name()
@@ -290,6 +292,17 @@ pub(crate) fn process_conversation_reader<R: BufRead>(
         return Ok(None);
     }
 
+    // If both JSONL metadata sources are empty, use display_hint from history.jsonl as custom_title
+    if extracted_custom_title.is_none() && extracted_summary.is_none() {
+        if let Some(hint) = display_hint {
+            extracted_custom_title = Some(hint.to_owned());
+            debug::debug(
+                debug_level,
+                &format!("Using display hint from history.jsonl as custom_title: {}", hint),
+            );
+        }
+    }
+
     // Use file modification time, falling back to current time if unavailable
     let timestamp = modified
         .map(DateTime::<Local>::from)
@@ -520,6 +533,7 @@ mod tests {
             reader,
             None, // modified
             None, // debug_level
+            None, // display_hint
         )
     }
 
