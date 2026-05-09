@@ -539,6 +539,15 @@ fn generate_markdown(path: &Path, options: ExportOptions) -> std::io::Result<Str
                                     prefix, thinking
                                 ));
                             }
+                            ContentBlock::ToolUse { name, input, .. } if options.operator_only && name == "Write" => {
+                                if let Some(content) = input.get("content").and_then(|v| v.as_str()) {
+                                    let file_path = input.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+                                    output.push_str(&format!(
+                                        "## {}Claude\n\n*Written to `{}`*\n\n{}\n\n",
+                                        prefix, file_path, content
+                                    ));
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -663,6 +672,15 @@ fn generate_ledger(path: &Path, options: ExportOptions) -> std::io::Result<Strin
                                 let rendered = rendered.trim_end();
                                 append_ledger_block(&mut output, "Thinking", rendered, NAME_WIDTH);
                                 output.push('\n');
+                            }
+                            ContentBlock::ToolUse { name, input, .. } if options.operator_only && name == "Write" => {
+                                if let Some(content) = input.get("content").and_then(|v| v.as_str()) {
+                                    let file_path = input.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+                                    let body = format!("*Written to {}*\n{}", file_path, content);
+                                    let wrapped = wrap_plain_text(&body, content_width);
+                                    append_ledger_block(&mut output, &speaker, &wrapped, NAME_WIDTH);
+                                    output.push('\n');
+                                }
                             }
                             _ => {}
                         }

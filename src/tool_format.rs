@@ -172,9 +172,14 @@ fn format_write(input: &Value) -> FormattedToolCall {
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
+    let body = input
+        .get("content")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     FormattedToolCall {
         header: format!("Write: {}", file_path),
-        body: None,
+        body,
     }
 }
 
@@ -291,5 +296,26 @@ mod tests {
         let result = format_tool_call("Edit", &input, 80);
         assert_eq!(result.header, "Edit: /src/lib.rs");
         assert_eq!(result.body, Some("- old code\n+ new code".to_string()));
+    }
+
+    #[test]
+    fn test_format_write_with_content() {
+        let input = json!({
+            "file_path": "/tmp/diagnosis.md",
+            "content": "## Findings\n\nStale session detected."
+        });
+        let result = format_tool_call("Write", &input, 80);
+        assert_eq!(result.header, "Write: /tmp/diagnosis.md");
+        assert_eq!(result.body, Some("## Findings\n\nStale session detected.".to_string()));
+    }
+
+    #[test]
+    fn test_format_write_without_content() {
+        let input = json!({
+            "file_path": "/tmp/empty.md"
+        });
+        let result = format_tool_call("Write", &input, 80);
+        assert_eq!(result.header, "Write: /tmp/empty.md");
+        assert_eq!(result.body, None);
     }
 }

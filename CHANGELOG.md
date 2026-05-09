@@ -1,3 +1,12 @@
+## Unreleased
+
+- Write tool calls now show the file content they write in the conversation
+  viewer (when tool output is visible) and in all export formats — previously
+  only the filename was shown, silently dropping the written content
+- The OperatorMarkdown / simplified export now includes Write tool content as
+  Claude output with a `Written to <file>` attribution, so diagnosis documents
+  and plans written by the LLM are preserved in conversation-turn exports
+
 ## v0.1.53 (2026-04-17)
 
 - Conversation viewer no longer jumps to unrelated content when toggling tool
