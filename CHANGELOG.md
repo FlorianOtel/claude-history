@@ -3,9 +3,10 @@
 - Write tool calls now show the file content they write in the conversation
   viewer (when tool output is visible) and in all export formats — previously
   only the filename was shown, silently dropping the written content
-- The OperatorMarkdown / simplified export now includes Write tool content as
-  Claude output with a `Written to <file>` attribution, so diagnosis documents
-  and plans written by the LLM are preserved in conversation-turn exports
+- The OperatorMarkdown / simplified export and the inline TUI viewer (when tool
+  display is off) now include Write tool content as Claude output with a
+  `Written to <file>` attribution, so diagnosis documents and plans written by
+  the LLM are never silently hidden
 
 ## v0.1.53 (2026-04-17)
 

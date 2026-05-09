@@ -496,6 +496,47 @@ fn render_assistant_message(
         }
     }
 
+    // Write tool content — always shown as LLM output when tool display is off,
+    // so diagnosis/plan documents written by the LLM are never silently hidden.
+    if !options.tool_display.is_visible() {
+        for block in &message.content {
+            if let ContentBlock::ToolUse { name, input, .. } = block {
+                if name == "Write" {
+                    if let Some(content) = input.get("content").and_then(|v| v.as_str()) {
+                        let file_path =
+                            input.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+                        let annotation =
+                            format!("*Written to `{}`*\n\n{}", file_path, content);
+                        let md_lines =
+                            render_markdown_to_lines(&annotation, options.content_width);
+                        if let Some(ref label) = nested_label {
+                            render_ledger_block_styled_dimmed(
+                                lines,
+                                label,
+                                th().accent,
+                                md_lines,
+                                options.show_timing,
+                            );
+                        } else {
+                            render_ledger_block_styled(
+                                lines,
+                                "Claude",
+                                th().accent,
+                                true,
+                                md_lines,
+                                ts_remaining,
+                            );
+                        }
+                        if ts_remaining.is_some() {
+                            ts_remaining = None;
+                        }
+                        printed = true;
+                    }
+                }
+            }
+        }
+    }
+
     // Tool calls (if enabled)
     if options.tool_display.is_visible() {
         for block in &message.content {
