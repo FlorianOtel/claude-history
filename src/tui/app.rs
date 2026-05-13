@@ -27,6 +27,7 @@ pub enum Action {
     Resume(PathBuf),
     ForkResume(PathBuf),
     OpenInPager(PathBuf),
+    ToggleMouse,
     Quit,
 }
 
@@ -92,6 +93,8 @@ pub struct ViewState {
     pub current_match: usize,
     /// Search direction (forward or backward)
     pub search_direction: SearchDirection,
+    /// Scroll position captured when search starts — used to find nearest match
+    pub search_start_offset: usize,
     /// Last search query
     pub last_search_query: String,
     /// Message boundary ranges from rendering
@@ -297,6 +300,8 @@ pub struct App {
     search_generation: u64,
     /// Whether a search is currently in-flight on the worker thread
     search_in_flight: bool,
+    /// Whether mouse capture is active (on = mouse scroll, off = terminal text selection)
+    mouse_capture: bool,
 }
 
 impl App {
@@ -341,6 +346,7 @@ impl App {
             search_rx,
             search_generation: 0,
             search_in_flight: false,
+            mouse_capture: true,
         }
     }
 
@@ -376,6 +382,7 @@ impl App {
             search_rx,
             search_generation: 0,
             search_in_flight: false,
+            mouse_capture: true,
         }
     }
 
@@ -431,6 +438,7 @@ impl App {
                 search_matches: Vec::new(),
                 current_match: 0,
                 search_direction: SearchDirection::Forward,
+                search_start_offset: 0,
                 last_search_query: String::new(),
                 message_ranges: Vec::new(),
                 focused_message: None,
@@ -450,6 +458,7 @@ impl App {
             search_rx,
             search_generation: 0,
             search_in_flight: false,
+            mouse_capture: true,
         }
     }
 
@@ -763,6 +772,10 @@ impl App {
 
     pub fn show_thinking(&self) -> bool {
         self.show_thinking
+    }
+
+    pub fn mouse_capture(&self) -> bool {
+        self.mouse_capture
     }
 
     // Getters for UI access
@@ -1321,6 +1334,12 @@ impl App {
                 None
             }
 
+            // Toggle mouse capture (on = mouse scroll, off = terminal text selection)
+            KeyCode::Char('m') => {
+                self.mouse_capture = !self.mouse_capture;
+                Some(Action::ToggleMouse)
+            }
+
             // Toggle tools
             KeyCode::Char('t') => {
                 self.toggle_view_tools(viewport_height);
@@ -1514,17 +1533,8 @@ impl App {
                         if let AppMode::View(ref mut state) = self.app_mode {
                             state.search_mode = ViewSearchMode::Active;
                         }
-                        // For backward search, jump to LAST match instead of first
-                        if dir == SearchDirection::Backward {
-                            if let AppMode::View(ref mut state) = self.app_mode {
-                                if !state.search_matches.is_empty() {
-                                    state.current_match = state.search_matches.len() - 1;
-                                    let ml = state.search_matches[state.current_match];
-                                    state.scroll_offset = ml;
-                                    Self::focus_message_at_line(state, ml);
-                                }
-                            }
-                        }
+                        // update_search_results already jumped to the correct position
+                        // based on direction and search_start_offset — no override needed
                     }
                 } else {
                     // Empty query — repeat last search
@@ -1987,6 +1997,7 @@ impl App {
                     search_matches: Vec::new(),
                     current_match: 0,
                     search_direction: SearchDirection::Forward,
+                    search_start_offset: 0,
                     last_search_query: String::new(),
                     message_ranges: rendered.messages,
                     focused_message: first_msg,
@@ -2011,6 +2022,7 @@ impl App {
     fn start_view_search(&mut self, direction: SearchDirection) {
         if let AppMode::View(ref mut state) = self.app_mode {
             state.search_direction = direction;
+            state.search_start_offset = state.scroll_offset; // anchor to current position
             state.search_mode = ViewSearchMode::Typing;
             state.search_query.clear();
             // Do NOT clear search_matches — empty Enter can advance existing matches
@@ -2034,13 +2046,29 @@ impl App {
                 .map(|(i, _)| i)
                 .collect();
 
-            // Jump to first match if any
-            if !state.search_matches.is_empty() {
-                state.current_match = 0;
-                let match_line = state.search_matches[0];
-                state.scroll_offset = match_line;
-                Self::focus_message_at_line(state, match_line);
+            if state.search_matches.is_empty() {
+                return;
             }
+
+            // Jump to nearest match relative to where the search started.
+            // Forward: first match at or after start; wrap to first if none after.
+            // Backward: last match at or before start; wrap to last if none before.
+            let start = state.search_start_offset;
+            let idx = match state.search_direction {
+                SearchDirection::Forward => {
+                    let pos = state.search_matches.partition_point(|&line| line < start);
+                    if pos >= state.search_matches.len() { 0 } else { pos }
+                }
+                SearchDirection::Backward => {
+                    let pos = state.search_matches.partition_point(|&line| line <= start);
+                    if pos == 0 { state.search_matches.len() - 1 } else { pos - 1 }
+                }
+            };
+
+            state.current_match = idx;
+            let match_line = state.search_matches[idx];
+            state.scroll_offset = match_line;
+            Self::focus_message_at_line(state, match_line);
         }
     }
 
@@ -2750,6 +2778,14 @@ pub fn run_with_loader(
                         let _ = guard.terminal.clear();
                         // Continue the loop (don't exit TUI)
                     }
+                    Action::ToggleMouse => {
+                        if app.mouse_capture() {
+                            let _ = crossterm::execute!(io::stdout(), EnableMouseCapture);
+                        } else {
+                            let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
+                        }
+                        // Continue the loop (don't exit TUI)
+                    }
                     _ => return Ok((action, app.into_conversations())),
                 }
             }
@@ -2837,6 +2873,13 @@ pub fn run_single_file(
                         );
                         let _ = guard.terminal.clear();
                         // Continue the loop (don't exit TUI)
+                    }
+                    Action::ToggleMouse => {
+                        if app.mouse_capture() {
+                            let _ = crossterm::execute!(io::stdout(), EnableMouseCapture);
+                        } else {
+                            let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
+                        }
                     }
                     _ => {}
                 }

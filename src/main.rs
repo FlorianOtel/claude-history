@@ -321,6 +321,7 @@ fn run() -> Result<()> {
         (tui::Action::Quit, _) => return Err(AppError::SelectionCancelled),
         (tui::Action::Delete(_), _) => unreachable!("Delete is handled internally"),
         (tui::Action::OpenInPager(_), _) => unreachable!("OpenInPager is handled internally"),
+        (tui::Action::ToggleMouse, _) => unreachable!("ToggleMouse is handled internally"),
     };
 
     if args.show_path {

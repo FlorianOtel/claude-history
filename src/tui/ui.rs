@@ -1,6 +1,7 @@
 use crate::config::KeyBindings;
 use crate::tui::app::{
-    App, AppMode, DialogMode, LineStyle, LoadingState, RenderedLine, ViewSearchMode, ViewState,
+    App, AppMode, DialogMode, LineStyle, LoadingState, RenderedLine, SearchDirection,
+    ViewSearchMode, ViewState,
 };
 use crate::tui::search::normalize_for_search;
 use crate::tui::theme::{self, Theme};
@@ -646,7 +647,12 @@ fn render_view_status_bar(frame: &mut Frame, app: &App, state: &ViewState, area:
         Span::styled("T", key_style),
         Span::styled(format!("hink·{} ", thinking_status), label_style),
         Span::styled("i", key_style),
-        Span::styled(format!("nfo·{}", timing_status), label_style),
+        Span::styled(format!("nfo·{} ", timing_status), label_style),
+        Span::styled("m", key_style),
+        Span::styled(
+            format!("ouse·{}", if app.mouse_capture() { "on " } else { "off" }),
+            label_style,
+        ),
         Span::raw("  "),
         Span::styled("│", label_style),
         Span::raw("  "),
@@ -704,8 +710,13 @@ fn render_search_input(frame: &mut Frame, state: &ViewState, area: Rect) {
         )
     };
 
+    let prompt = if state.search_direction == SearchDirection::Backward {
+        "  ?"
+    } else {
+        "  /"
+    };
     let input_line = Line::from(vec![
-        Span::raw("  /"),
+        Span::raw(prompt),
         Span::styled(
             &state.search_query,
             Style::default().fg(rgb(th().text_primary)),
