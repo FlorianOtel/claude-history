@@ -12,7 +12,7 @@ fn get_pager_command() -> (String, Vec<String>) {
             );
         }
     }
-    ("less".to_string(), vec!["-R".to_string()])
+    ("less".to_string(), vec!["-s".to_string(), "-C".to_string(), "-I".to_string(), "-R".to_string()])
 }
 
 /// Spawn a pager process

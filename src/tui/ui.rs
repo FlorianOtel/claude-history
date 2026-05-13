@@ -191,6 +191,8 @@ fn render_list_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw("  "),
         Span::styled("Enter", action_key),
         Span::styled(" open  ", action_label),
+        Span::styled("^V", action_key),
+        Span::styled(" less  ", action_label),
         Span::styled(keys.resume.short_label(), action_key),
         Span::styled(" resume  ", action_label),
         Span::styled(keys.fork.short_label(), action_key),
@@ -216,8 +218,8 @@ fn render_list_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     spans.extend([
-        Span::styled("?", key_style),
-        Span::styled("help  ", label_style),
+        Span::styled("h", key_style),
+        Span::styled("elp  ", label_style),
         Span::styled("Esc", key_style),
         Span::styled(" quit", label_style),
     ]);
@@ -652,19 +654,21 @@ fn render_view_status_bar(frame: &mut Frame, app: &App, state: &ViewState, area:
 
     if state.search_mode == ViewSearchMode::Active {
         spans.extend([
-            Span::styled("n", key_style),
-            Span::styled("ext  ", label_style),
-            Span::styled("N", key_style),
-            Span::styled("prev  ", label_style),
+            Span::styled("/", key_style),
+            Span::styled("fwd  ", label_style),
+            Span::styled("?", key_style),
+            Span::styled("bwd  ", label_style),
             Span::styled("Esc", key_style),
             Span::styled(" clear", label_style),
         ]);
     } else {
         spans.extend([
-            Span::styled("?", key_style),
-            Span::styled("help  ", label_style),
+            Span::styled("h", key_style),
+            Span::styled("elp  ", label_style),
             Span::styled("/", key_style),
             Span::styled("search  ", label_style),
+            Span::styled("?", key_style),
+            Span::styled("bsearch  ", label_style),
             Span::styled("e", key_style),
             Span::styled("xport  ", label_style),
             Span::styled("y", key_style),
@@ -1041,8 +1045,10 @@ fn render_help_overlay(
             ("u / Ctrl+U".into(), "Half page up"),
             ("g / Home".into(), "Jump to top"),
             ("G / End".into(), "Jump to bottom"),
-            ("/".into(), "Search"),
-            ("n / N".into(), "Next / prev match"),
+            ("h".into(), "Help"),
+            ("/".into(), "Forward search / repeat"),
+            ("?".into(), "Backward search / repeat"),
+            ("Ctrl+V".into(), "Open in less"),
             ("t".into(), "Cycle tools: off/trunc/full"),
             ("T".into(), "Toggle thinking"),
             ("i".into(), "Toggle timing"),
@@ -1058,6 +1064,7 @@ fn render_help_overlay(
         ]
     } else {
         vec![
+            ("h".into(), "Help"),
             ("↑ / ↓".into(), "Move selection"),
             ("← / →".into(), "Move cursor"),
             ("Ctrl+P / N".into(), "Move selection"),

@@ -26,6 +26,7 @@ pub enum Action {
     Delete(PathBuf),
     Resume(PathBuf),
     ForkResume(PathBuf),
+    OpenInPager(PathBuf),
     Quit,
 }
 
@@ -89,6 +90,10 @@ pub struct ViewState {
     pub search_matches: Vec<usize>,
     /// Current match index
     pub current_match: usize,
+    /// Search direction (forward or backward)
+    pub search_direction: SearchDirection,
+    /// Last search query
+    pub last_search_query: String,
     /// Message boundary ranges from rendering
     pub message_ranges: Vec<MessageRange>,
     /// Currently focused message index
@@ -110,6 +115,13 @@ pub enum ViewSearchMode {
     Typing,
     /// Search active, navigating results
     Active,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, Copy)]
+pub enum SearchDirection {
+    #[default]
+    Forward,
+    Backward,
 }
 
 /// A single rendered line with its spans
@@ -418,6 +430,8 @@ impl App {
                 search_query: String::new(),
                 search_matches: Vec::new(),
                 current_match: 0,
+                search_direction: SearchDirection::Forward,
+                last_search_query: String::new(),
                 message_ranges: Vec::new(),
                 focused_message: None,
                 message_nav_active: false,
@@ -741,6 +755,14 @@ impl App {
         self.selected
             .and_then(|sel| self.filtered.get(sel))
             .map(|&idx| self.conversations[idx].path.clone())
+    }
+
+    pub fn tool_display(&self) -> ToolDisplayMode {
+        self.tool_display
+    }
+
+    pub fn show_thinking(&self) -> bool {
+        self.show_thinking
     }
 
     // Getters for UI access
@@ -1070,7 +1092,7 @@ impl App {
     /// Handle a key event during help overlay mode
     fn handle_help_key(&mut self, code: KeyCode) -> Option<Action> {
         match code {
-            KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc => {
+            KeyCode::Char('h') | KeyCode::Char('q') | KeyCode::Esc => {
                 self.dialog_mode = DialogMode::None;
                 None
             }
@@ -1144,7 +1166,7 @@ impl App {
         if let AppMode::View(ref state) = self.app_mode
             && state.search_mode == ViewSearchMode::Typing
         {
-            return self.handle_search_typing_key(code, modifiers);
+            return self.handle_search_typing_key(code, modifiers, viewport_height);
         }
 
         // Check configurable keybindings before the match block
@@ -1281,29 +1303,21 @@ impl App {
                 None
             }
 
-            // Start search
+            // Start forward search
             KeyCode::Char('/') => {
-                self.start_view_search();
+                self.start_view_search(SearchDirection::Forward);
                 None
             }
 
-            // Next match
-            KeyCode::Char('n') if !modifiers.contains(KeyModifiers::CONTROL) => {
-                if let AppMode::View(ref state) = self.app_mode
-                    && state.search_mode == ViewSearchMode::Active
-                {
-                    self.next_search_match(viewport_height);
-                }
+            // Start backward search
+            KeyCode::Char('?') => {
+                self.start_view_search(SearchDirection::Backward);
                 None
             }
 
-            // Previous match
-            KeyCode::Char('N') => {
-                if let AppMode::View(ref state) = self.app_mode
-                    && state.search_mode == ViewSearchMode::Active
-                {
-                    self.prev_search_match(viewport_height);
-                }
+            // Open help overlay
+            KeyCode::Char('h') => {
+                self.dialog_mode = DialogMode::Help;
                 None
             }
 
@@ -1398,12 +1412,6 @@ impl App {
                 None
             }
 
-            // Open help overlay
-            KeyCode::Char('?') => {
-                self.dialog_mode = DialogMode::Help;
-                None
-            }
-
             // Ctrl+D - half page down (vim-style, same as 'd')
             KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
                 state.scroll_offset = (state.scroll_offset + viewport_height / 2).min(max_scroll);
@@ -1431,6 +1439,7 @@ impl App {
         &mut self,
         code: KeyCode,
         modifiers: KeyModifiers,
+        viewport_height: usize,
     ) -> Option<Action> {
         match code {
             // Ctrl+C: cancel search
@@ -1480,11 +1489,83 @@ impl App {
                 None
             }
             KeyCode::Enter => {
-                if let AppMode::View(ref mut state) = self.app_mode {
-                    if !state.search_matches.is_empty() {
-                        state.search_mode = ViewSearchMode::Active;
+                // Snapshot before mutable borrows
+                let (query, last, dir) = if let AppMode::View(ref state) = self.app_mode {
+                    (state.search_query.clone(), state.last_search_query.clone(), state.search_direction)
+                } else {
+                    return None;
+                };
+
+                if !query.is_empty() {
+                    // New search query
+                    if let AppMode::View(ref mut state) = self.app_mode {
+                        state.last_search_query = query;
+                    }
+                    self.update_search_results(); // auto-jumps to match 0
+                    let has_matches = if let AppMode::View(ref state) = self.app_mode {
+                        !state.search_matches.is_empty()
+                    } else { false };
+
+                    if !has_matches {
+                        if let AppMode::View(ref mut state) = self.app_mode {
+                            state.search_mode = ViewSearchMode::Off;
+                        }
                     } else {
-                        state.search_mode = ViewSearchMode::Off;
+                        if let AppMode::View(ref mut state) = self.app_mode {
+                            state.search_mode = ViewSearchMode::Active;
+                        }
+                        // For backward search, jump to LAST match instead of first
+                        if dir == SearchDirection::Backward {
+                            if let AppMode::View(ref mut state) = self.app_mode {
+                                if !state.search_matches.is_empty() {
+                                    state.current_match = state.search_matches.len() - 1;
+                                    let ml = state.search_matches[state.current_match];
+                                    state.scroll_offset = ml;
+                                    Self::focus_message_at_line(state, ml);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Empty query — repeat last search
+                    if last.is_empty() {
+                        // No previous pattern → no-op
+                        if let AppMode::View(ref mut state) = self.app_mode {
+                            state.search_mode = ViewSearchMode::Off;
+                        }
+                    } else {
+                        // Repopulate matches if needed
+                        let matches_empty = if let AppMode::View(ref state) = self.app_mode {
+                            state.search_matches.is_empty()
+                        } else { true };
+
+                        if matches_empty {
+                            if let AppMode::View(ref mut state) = self.app_mode {
+                                state.search_query = last.clone();
+                            }
+                            self.update_search_results();
+                        }
+
+                        let has_matches = if let AppMode::View(ref state) = self.app_mode {
+                            !state.search_matches.is_empty()
+                        } else { false };
+
+                        if !has_matches {
+                            if let AppMode::View(ref mut state) = self.app_mode {
+                                state.search_mode = ViewSearchMode::Off;
+                            }
+                        } else {
+                            // Show the last query in search bar
+                            if let AppMode::View(ref mut state) = self.app_mode {
+                                state.search_query = last;
+                                state.search_mode = ViewSearchMode::Active;
+                            }
+                            // Advance in the appropriate direction
+                            match dir {
+                                SearchDirection::Forward => self.next_search_match(viewport_height),
+                                SearchDirection::Backward => self.prev_search_match(viewport_height),
+                            }
+                        }
                     }
                 }
                 None
@@ -1617,6 +1698,11 @@ impl App {
                 }
                 // Open help overlay
                 KeyCode::Char('?') => {
+                    self.dialog_mode = DialogMode::Help;
+                    None
+                }
+                // Open help overlay (alternative shortcut)
+                KeyCode::Char('h') => {
                     self.dialog_mode = DialogMode::Help;
                     None
                 }
@@ -1788,6 +1874,10 @@ impl App {
             KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => {
                 self.get_selected_path().map(Action::Select)
             }
+            // Ctrl+V - open selected conversation in external pager (less)
+            KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {
+                self.get_selected_path().map(Action::OpenInPager)
+            }
             KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.delete_word_backwards() {
                     self.dispatch_search();
@@ -1801,6 +1891,11 @@ impl App {
             }
             // Open help overlay
             KeyCode::Char('?') => {
+                self.dialog_mode = DialogMode::Help;
+                None
+            }
+            // Open help overlay (alternative shortcut)
+            KeyCode::Char('h') => {
                 self.dialog_mode = DialogMode::Help;
                 None
             }
@@ -1891,6 +1986,8 @@ impl App {
                     search_query: String::new(),
                     search_matches: Vec::new(),
                     current_match: 0,
+                    search_direction: SearchDirection::Forward,
+                    last_search_query: String::new(),
                     message_ranges: rendered.messages,
                     focused_message: first_msg,
                     message_nav_active: false,
@@ -1911,12 +2008,12 @@ impl App {
     }
 
     /// Start search mode in view
-    fn start_view_search(&mut self) {
+    fn start_view_search(&mut self, direction: SearchDirection) {
         if let AppMode::View(ref mut state) = self.app_mode {
+            state.search_direction = direction;
             state.search_mode = ViewSearchMode::Typing;
             state.search_query.clear();
-            state.search_matches.clear();
-            state.current_match = 0;
+            // Do NOT clear search_matches — empty Enter can advance existing matches
         }
     }
 
@@ -2621,6 +2718,38 @@ pub fn run_with_loader(
                         }
                         // Continue the loop (don't exit TUI)
                     }
+                    Action::OpenInPager(path) => {
+                        let no_tools = !app.tool_display().is_visible();
+                        let show_thinking = app.show_thinking();
+
+                        // Suspend TUI
+                        let _ = terminal::disable_raw_mode();
+                        let _ = crossterm::execute!(
+                            io::stdout(),
+                            DisableMouseCapture,
+                            LeaveAlternateScreen
+                        );
+
+                        // Render + pipe to pager
+                        let opts = crate::display::DisplayOptions {
+                            no_tools,
+                            show_thinking,
+                            use_pager: true,
+                            no_color: false,
+                            debug_level: None,
+                        };
+                        let _ = crate::display::render_to_terminal(&path, &opts);
+
+                        // Resume TUI
+                        let _ = terminal::enable_raw_mode();
+                        let _ = crossterm::execute!(
+                            io::stdout(),
+                            EnterAlternateScreen,
+                            EnableMouseCapture
+                        );
+                        let _ = guard.terminal.clear();
+                        // Continue the loop (don't exit TUI)
+                    }
                     _ => return Ok((action, app.into_conversations())),
                 }
             }
@@ -2674,8 +2803,43 @@ pub fn run_single_file(
                 }
                 _ => continue,
             };
-            if let Some(Action::Quit) = app.handle_key(key.code, key.modifiers, viewport_height) {
-                return Ok(());
+            if let Some(action) = app.handle_key(key.code, key.modifiers, viewport_height) {
+                match action {
+                    Action::Quit => return Ok(()),
+                    Action::OpenInPager(path) => {
+                        let no_tools = !app.tool_display().is_visible();
+                        let show_thinking = app.show_thinking();
+
+                        // Suspend TUI
+                        let _ = terminal::disable_raw_mode();
+                        let _ = crossterm::execute!(
+                            io::stdout(),
+                            DisableMouseCapture,
+                            LeaveAlternateScreen
+                        );
+
+                        // Render + pipe to pager
+                        let opts = crate::display::DisplayOptions {
+                            no_tools,
+                            show_thinking,
+                            use_pager: true,
+                            no_color: false,
+                            debug_level: None,
+                        };
+                        let _ = crate::display::render_to_terminal(&path, &opts);
+
+                        // Resume TUI
+                        let _ = terminal::enable_raw_mode();
+                        let _ = crossterm::execute!(
+                            io::stdout(),
+                            EnterAlternateScreen,
+                            EnableMouseCapture
+                        );
+                        let _ = guard.terminal.clear();
+                        // Continue the loop (don't exit TUI)
+                    }
+                    _ => {}
+                }
             }
         }
     }
