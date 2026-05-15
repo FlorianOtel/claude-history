@@ -1376,10 +1376,6 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(rgb(th().dot_separator)),
             ));
             let timestamp_color = match recency {
-                Recency::Now => th().timestamp_now,
-                Recency::Minutes => th().timestamp_minutes,
-                Recency::Hours => th().timestamp_hours,
-                Recency::Days => th().timestamp_days,
                 Recency::Old => th().text_secondary,
             };
             header_spans.push(Span::styled(
@@ -1458,55 +1454,16 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(list, area);
 }
 
-/// Recency level for timestamp color grading
+/// Recency level for timestamp color grading.
+/// Only `Old` is used now that all timestamps display as absolute dates.
 enum Recency {
-    Now,
-    Minutes,
-    Hours,
-    Days,
     Old,
 }
 
-/// Format a timestamp as relative time for recent entries, absolute for older ones.
-/// Returns (formatted_string, recency) for color grading.
-fn format_timestamp(timestamp: DateTime<Local>, now: DateTime<Local>) -> (String, Recency) {
-    let age = now.signed_duration_since(timestamp);
-
-    // Future timestamps (clock skew): show absolute
-    if age.num_seconds() < 0 {
-        return (timestamp.format("%b %d, %H:%M").to_string(), Recency::Old);
-    }
-
-    let seconds = age.num_seconds();
-    let minutes = age.num_minutes();
-    let hours = age.num_hours();
-
-    if seconds < 60 {
-        return ("just now".to_string(), Recency::Now);
-    }
-    if minutes < 60 {
-        return (format!("{minutes} min ago"), Recency::Minutes);
-    }
-    if hours < 24 {
-        return (
-            format!("{hours} hour{} ago", if hours == 1 { "" } else { "s" }),
-            Recency::Hours,
-        );
-    }
-
-    // Use calendar day difference for "yesterday" accuracy
-    let day_diff = now
-        .date_naive()
-        .signed_duration_since(timestamp.date_naive())
-        .num_days();
-    if day_diff == 1 {
-        return ("yesterday".to_string(), Recency::Days);
-    }
-    if day_diff < 7 {
-        return (format!("{day_diff} days ago"), Recency::Days);
-    }
-
-    (timestamp.format("%b %d, %H:%M").to_string(), Recency::Old)
+/// Format a timestamp as `YYYY-MM-DD--HH-MM`.
+/// Returns (formatted_string, recency) for backward compatibility with the color-grading match site.
+fn format_timestamp(timestamp: DateTime<Local>, _now: DateTime<Local>) -> (String, Recency) {
+    (timestamp.format("%Y-%m-%d--%H-%M").to_string(), Recency::Old)
 }
 
 /// Truncate text to max_width chars, adding "…" suffix if truncated.
