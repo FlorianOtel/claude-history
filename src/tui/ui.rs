@@ -219,6 +219,8 @@ fn render_list_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     spans.extend([
+        Span::styled("^L", key_style),
+        Span::styled(" refresh list  ", label_style),
         Span::styled("h", key_style),
         Span::styled("elp  ", label_style),
         Span::styled("Esc", key_style),
@@ -1088,6 +1090,7 @@ fn render_help_overlay(
             ("Enter".into(), "Open viewer"),
             ("Ctrl+O".into(), "Select and exit"),
             ("Ctrl+W".into(), "Delete word"),
+            ("Ctrl+L".into(), "Refresh list"),
             (keys.resume.help_label(), "Resume"),
             (keys.fork.help_label(), "Fork resume"),
             (keys.delete.help_label(), "Delete"),

@@ -28,6 +28,7 @@ pub enum Action {
     ForkResume(PathBuf),
     OpenInPager(PathBuf),
     ToggleMouse,
+    ReloadSessions,
     Quit,
 }
 
@@ -541,6 +542,33 @@ impl App {
             // Has query or workspace filter active - apply full filter
             self.update_filter();
         }
+    }
+
+    /// Reset the app to a fresh loading state, discarding all in-memory data.
+    /// Used when Ctrl+L is pressed to refresh the list from disk.
+    pub fn reset_for_reload(&mut self) {
+        // Clear all conversations and search data
+        self.conversations.clear();
+        self.searchable.clear();
+        self.filtered.clear();
+
+        // Reset selection and loading state
+        self.selected = None;
+        self.loading_state = LoadingState::Loading { loaded: 0 };
+
+        // Clear query and cursor position
+        self.query.clear();
+        self.cursor_pos = 0;
+
+        // Send empty data to background search worker
+        let _ = self.search_tx.send(SearchCommand::UpdateData {
+            conversations: Arc::new(Vec::new()),
+            searchable: Arc::new(Vec::new()),
+        });
+
+        // Bump search generation and clear in-flight flag
+        self.search_generation += 1;
+        self.search_in_flight = false;
     }
 
     /// Consume the app and return its conversations
@@ -1716,6 +1744,10 @@ impl App {
                     self.dialog_mode = DialogMode::Help;
                     None
                 }
+                // Ctrl+L: refresh list from disk
+                KeyCode::Char('l') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(Action::ReloadSessions)
+                }
                 // Allow typing during loading - query is buffered for when loading finishes
                 KeyCode::Char(c) => {
                     // Insert at cursor position
@@ -1887,6 +1919,10 @@ impl App {
             // Ctrl+V - open selected conversation in external pager (less)
             KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {
                 self.get_selected_path().map(Action::OpenInPager)
+            }
+            // Ctrl+L: refresh list from disk
+            KeyCode::Char('l') if modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(Action::ReloadSessions)
             }
             KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.delete_word_backwards() {
@@ -2595,12 +2631,14 @@ fn drain_events(wait: Duration) -> Result<Vec<Event>> {
 /// Run the TUI with background loading
 /// Returns the action and the final list of conversations
 pub fn run_with_loader(
-    rx: Receiver<LoaderMessage>,
+    mut rx: Receiver<LoaderMessage>,
     tool_display: ToolDisplayMode,
     show_thinking: bool,
     keys: KeyBindings,
     workspace_filter: bool,
     current_project_dir_name: Option<String>,
+    show_last: bool,
+    debug_level: Option<crate::cli::DebugLevel>,
 ) -> Result<(Action, Vec<Conversation>)> {
     // Set up panic hook to restore terminal
     let original_hook = std::panic::take_hook();
@@ -2785,6 +2823,12 @@ pub fn run_with_loader(
                             let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
                         }
                         // Continue the loop (don't exit TUI)
+                    }
+                    Action::ReloadSessions => {
+                        app.reset_for_reload();
+                        rx = crate::history::load_all_conversations_streaming(show_last, debug_level);
+                        // Back to outer loop to drain the new rx
+                        break;
                     }
                     _ => return Ok((action, app.into_conversations())),
                 }

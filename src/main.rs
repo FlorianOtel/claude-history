@@ -304,6 +304,8 @@ fn run() -> Result<()> {
         keys,
         workspace_filter,
         current_project_dir_name,
+        show_last,
+        args.debug,
     )? {
         (tui::Action::Select(path), convs) => (convs, path),
         (tui::Action::Resume(path), convs) => {
@@ -322,6 +324,7 @@ fn run() -> Result<()> {
         (tui::Action::Delete(_), _) => unreachable!("Delete is handled internally"),
         (tui::Action::OpenInPager(_), _) => unreachable!("OpenInPager is handled internally"),
         (tui::Action::ToggleMouse, _) => unreachable!("ToggleMouse is handled internally"),
+        (tui::Action::ReloadSessions, _) => unreachable!("ReloadSessions is handled internally"),
     };
 
     if args.show_path {

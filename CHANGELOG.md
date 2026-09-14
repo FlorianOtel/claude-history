@@ -1,5 +1,8 @@
 ## Unreleased
 
+- Added `Ctrl+L` in the session list to refresh conversations from disk; the
+  status bar now shows `^L refresh list` and the Help overlay documents the
+  shortcut
 - Write tool calls now show the file content they write in the conversation
   viewer (when tool output is visible) and in all export formats — previously
   only the filename was shown, silently dropping the written content
