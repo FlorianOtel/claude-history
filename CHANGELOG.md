@@ -1,5 +1,9 @@
 ## Unreleased
 
+- The Help overlay in the session list now documents `Ctrl+V` (open the
+  highlighted session in the pager); the default pager is now `less -scIR`
+  (previously `less -sCIR`)
+
 - Added `Ctrl+L` in the session list to refresh conversations from disk; the
   status bar now shows `^L refresh list` and the Help overlay documents the
   shortcut
