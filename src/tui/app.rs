@@ -2068,8 +2068,8 @@ impl App {
     /// Update search results based on current query
     fn update_search_results(&mut self) {
         if let AppMode::View(ref mut state) = self.app_mode {
-            let query_lower = state.search_query.to_lowercase();
-            if query_lower.is_empty() {
+            let query = state.search_query.clone();
+            if query.is_empty() {
                 state.search_matches.clear();
                 return;
             }
@@ -2078,7 +2078,7 @@ impl App {
                 .rendered_lines
                 .iter()
                 .enumerate()
-                .filter(|(_, line)| line_matches_query(line, &query_lower))
+                .filter(|(_, line)| line_matches_query(line, &query))
                 .map(|(i, _)| i)
                 .collect();
 
@@ -2232,12 +2232,12 @@ impl App {
 
                 // Recompute search matches for new content
                 if state.search_mode == ViewSearchMode::Active && !state.search_query.is_empty() {
-                    let query_lower = state.search_query.to_lowercase();
+                    let query = state.search_query.clone();
                     state.search_matches = state
                         .rendered_lines
                         .iter()
                         .enumerate()
-                        .filter(|(_, line)| line_matches_query(line, &query_lower))
+                        .filter(|(_, line)| line_matches_query(line, &query))
                         .map(|(i, _)| i)
                         .collect();
 
@@ -2557,11 +2557,11 @@ struct TerminalGuard {
     terminal: Terminal<CrosstermBackend<Stdout>>,
 }
 
-/// Check if a rendered line matches the search query by concatenating all span texts.
-/// This allows multi-word queries to match across span boundaries.
-pub fn line_matches_query(line: &RenderedLine, query_lower: &str) -> bool {
+/// Check if a rendered line contains the search query (case-sensitive) by concatenating
+/// all span texts. This allows multi-word queries to match across span boundaries.
+pub fn line_matches_query(line: &RenderedLine, query: &str) -> bool {
     let full_text: String = line.spans.iter().map(|(text, _)| text.as_str()).collect();
-    full_text.to_lowercase().contains(query_lower)
+    full_text.contains(query)
 }
 
 impl TerminalGuard {

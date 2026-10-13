@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Conversation viewer search (`/` forward, `?` backward) is now case-sensitive
+  for both matching and highlighting (previously case-insensitive); there is
+  no toggle
+
 - The Help overlay in the session list now documents `Ctrl+V` (open the
   highlighted session in the pager); the default pager is now `less -scIR`
   (previously `less -sCIR`)

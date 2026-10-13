@@ -549,7 +549,7 @@ fn render_view_header(frame: &mut Frame, app: &App, state: &ViewState, area: Rec
 
 fn render_view_content(frame: &mut Frame, state: &ViewState, area: Rect) {
     let visible_height = area.height as usize;
-    let query_lower = state.search_query.to_lowercase();
+    let query = state.search_query.clone();
 
     // Determine focused message line range (only when nav mode active)
     let focused_range = if state.message_nav_active {
@@ -569,7 +569,7 @@ fn render_view_content(frame: &mut Frame, state: &ViewState, area: Rect) {
         .take(visible_height)
         .map(|(line_idx, rendered)| {
             let is_current_match = state.search_matches.get(state.current_match) == Some(&line_idx);
-            let has_match = !query_lower.is_empty() && state.search_matches.contains(&line_idx);
+            let has_match = !query.is_empty() && state.search_matches.contains(&line_idx);
 
             let is_focused = focused_range
                 .as_ref()
@@ -588,10 +588,10 @@ fn render_view_content(frame: &mut Frame, state: &ViewState, area: Rect) {
 
             let mut spans: Vec<Span> = vec![gutter];
 
-            if has_match && !query_lower.is_empty() {
+            if has_match && !query.is_empty() {
                 spans.extend(highlight_line_matches(
                     rendered,
-                    &query_lower,
+                    &query,
                     is_current_match,
                 ));
             } else {
@@ -754,24 +754,17 @@ fn highlight_line_matches(
         .iter()
         .map(|(text, _)| text.as_str())
         .collect();
-    let full_lower = full_text.to_lowercase();
-
-    // Find match positions using char indices to safely handle Unicode
-    // (lowercasing can change byte lengths for some characters)
+    // Match positions are found over the original characters (case-sensitive), so
+    // char indices map 1:1 onto `orig_chars` and byte offsets stay valid.
     let orig_chars: Vec<(usize, char)> = full_text.char_indices().collect();
-    let lower_chars: Vec<char> = full_lower.chars().collect();
+    let text_chars: Vec<char> = orig_chars.iter().map(|(_, c)| *c).collect();
     let query_chars: Vec<char> = query.chars().collect();
 
     let mut match_byte_ranges: Vec<(usize, usize)> = Vec::new();
     if !query_chars.is_empty() {
         let mut i = 0;
-        while i + query_chars.len() <= lower_chars.len() {
-            if lower_chars[i..i + query_chars.len()] == query_chars[..] {
-                // Guard against Unicode casing expansion (e.g. ß → ss) where
-                // lower_chars may be longer than orig_chars
-                if i >= orig_chars.len() {
-                    break;
-                }
+        while i + query_chars.len() <= text_chars.len() {
+            if text_chars[i..i + query_chars.len()] == query_chars[..] {
                 let start_byte = orig_chars[i].0;
                 let end_byte = if i + query_chars.len() < orig_chars.len() {
                     orig_chars[i + query_chars.len()].0
