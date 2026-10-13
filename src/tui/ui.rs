@@ -1088,6 +1088,7 @@ fn render_help_overlay(
             ("Home / End".into(), "Jump to first/last"),
             ("Tab".into(), "Toggle scope (All/Project)"),
             ("Enter".into(), "Open viewer"),
+            ("Ctrl+V".into(), "Open in less"),
             ("Ctrl+O".into(), "Select and exit"),
             ("Ctrl+W".into(), "Delete word"),
             ("Ctrl+L".into(), "Refresh list"),

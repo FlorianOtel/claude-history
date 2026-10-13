@@ -1,7 +1,7 @@
 use std::io;
 use std::process::{Child, Command, Stdio};
 
-/// Get the pager command from $PAGER env var, or default to "less -R"
+/// Get the pager command from $PAGER env var, or default to "less -scIR"
 fn get_pager_command() -> (String, Vec<String>) {
     if let Ok(pager) = std::env::var("PAGER") {
         let parts: Vec<&str> = pager.split_whitespace().collect();
@@ -12,7 +12,7 @@ fn get_pager_command() -> (String, Vec<String>) {
             );
         }
     }
-    ("less".to_string(), vec!["-s".to_string(), "-C".to_string(), "-I".to_string(), "-R".to_string()])
+    ("less".to_string(), vec!["-s".to_string(), "-c".to_string(), "-I".to_string(), "-R".to_string()])
 }
 
 /// Spawn a pager process

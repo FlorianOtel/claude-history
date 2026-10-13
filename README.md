@@ -323,12 +323,12 @@ Claude: Looking at the code, the issue is...
 
 ### Pager output
 
-By default, conversation output is piped through a pager (`less -R`) when stdout
+By default, conversation output is piped through a pager (`less -scIR`) when stdout
 is a terminal. This enables scrolling through long conversations. Use
 `--no-pager` to disable this behavior and print directly to stdout.
 
 The pager respects the `$PAGER` environment variable. If not set, it defaults to
-`less -R` (which preserves ANSI colors).
+`less -scIR` (which preserves ANSI colors).
 
 ### Scope: all conversations vs current workspace
 
